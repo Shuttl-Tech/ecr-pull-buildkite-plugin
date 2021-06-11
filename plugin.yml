@@ -1,0 +1,14 @@
+name: ECR Pull
+description: Pull images from private ECR repository
+author: https://github.com/Shuttl-Tech
+requirements:
+  - docker
+configuration:
+  properties:
+    repository:
+      type: string
+    region:
+      type: string
+    tags:
+      type: [array, string]
+  required: ['repository']

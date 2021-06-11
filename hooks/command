@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -eou pipefail
+
+if [[ -z ${BUILDKITE_PLUGIN_ECR_PULL_REPOSITORY:-} ]]; then
+  echo "'repository' property is required"
+  exit 1
+fi
+
+if [[ -n ${BUILDKITE_PLUGIN_ECR_PULL_REGION:-} ]]; then
+  region="${BUILDKITE_PLUGIN_ECR_PULL_REGION}"
+elif [[ -n ${AWS_DEFAULT_REGION:-} ]]; then
+  region="${AWS_DEFAULT_REGION}"
+else
+  region="$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | cut -d ' ' -f 2 | sed -e 's/.$//')"
+fi
+
+get_ecr_url() {
+  local repository_name="${1}"
+  local registry_id="${2}"
+
+  aws ecr describe-repositories \
+    --region "${region}" \
+    --repository-names "${repository_name}" \
+    --registry-id "${registry_id}" \
+    --output text \
+    --query 'repositories[0].repositoryUri'
+}
+
+read_list_property() {
+  local prefix="BUILDKITE_PLUGIN_ECR_PULL_${1}"
+  local property="${prefix}_0"
+
+  result=()
+
+  if [[ -n ${!property:-} ]]; then
+    local i=0
+    local property="${prefix}_${i}"
+
+    while [[ -n ${!property:-} ]]; do
+      result+=("${!property}")
+
+      i=$((i + 1))
+      property="${prefix}_${i}"
+    done
+  elif [[ -n ${!prefix:-} ]]; then
+    result+=("${!prefix}")
+  fi
+
+  [[ ${#result[@]} -gt 0 ]] || return 1
+}
+
+read_tags() {
+  local property="${1}"
+
+  if read_list_property "${property}"; then
+    tags+=("${result[@]}")
+  fi
+
+  if [ ${#tags[@]} -eq 0 ]; then
+    tags=('latest')
+  fi
+}
+
+
+account_id="$(aws sts get-caller-identity --output text | cut -f1)"
+image="$(get_ecr_url "${BUILDKITE_PLUGIN_ECR_PULL_REPOSITORY}" "${account_id}")"
+tags=( )
+
+read_tags 'TAGS'
+
+echo '--- Ready to pull images'
+echo "Repository: ${image}"
+echo "Tags: ${tags[*]}"
+
+for tag in "${tags[@]}"; do
+  src="${image}:${tag}"
+  echo "Pulling: ${src}"
+
+  docker pull "${src}"
+done
